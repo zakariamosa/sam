@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+logs/
+sam_outputs/
+sam_outputs_api_check/
+sam_prompt_outputs/
+models/*.pth
+*.pyc
+
+Test Images/

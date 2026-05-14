@@ -1,10 +1,5 @@
-cd ~/Desktop/sam/sam
-
-source .venv/bin/activate
-
 export SAM_CHECKPOINT="checkpoints/sam_vit_h_4b8939.pth"
 export SAM_MODEL_TYPE="vit_h"
 export SAM_DEVICE="cpu"
-export SAM_API_KEY="change-me"
-
+export SAM_API_KEY="zakariamosa2026!"
 uvicorn app:app --host 0.0.0.0 --port 8000

@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 
 from ticket_detector import DetectorConfig, TicketDetector, decode_image_bytes, tickets_api_response
 
@@ -89,6 +90,13 @@ app = FastAPI(
     title="SAM Ticket Detection Service",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

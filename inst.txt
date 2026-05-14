@@ -1,1 +1,2 @@
-curl -X POST http://127.0.0.1:8000/detect-tickets -H 'x-api-key: zakaria123' -F 'image=@/Users/odeya/Desktop/sam/sam/Test Images/IMG_2437.jpeg'
+mkdir -p checkpoints
+curl -L https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth -o checkpoints/sam_vit_h_4b8939.pth

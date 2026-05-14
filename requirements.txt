@@ -10,4 +10,3 @@ pyyaml
 tqdm
 pycocotools
 segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
-pytesseract

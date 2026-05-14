@@ -4,13 +4,12 @@ import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
 from ticket_detector import DetectorConfig, TicketDetector, decode_image_bytes, tickets_api_response
 
@@ -64,9 +63,6 @@ def config_from_env() -> DetectorConfig:
         min_light_ratio=env_float("SAM_MIN_LIGHT_RATIO", defaults.min_light_ratio),
         min_dark_ratio=env_float("SAM_MIN_DARK_RATIO", defaults.min_dark_ratio),
         same_width_tolerance=env_float("SAM_SAME_WIDTH_TOLERANCE", defaults.same_width_tolerance),
-        ocr_min_confidence=env_float("SAM_OCR_MIN_CONFIDENCE", defaults.ocr_min_confidence),
-        ocr_min_words=env_int("SAM_OCR_MIN_WORDS", defaults.ocr_min_words),
-        ocr_psm=env_int("SAM_OCR_PSM", defaults.ocr_psm),
         polygon_epsilon=env_float("SAM_POLYGON_EPSILON", defaults.polygon_epsilon),
     )
 
@@ -229,11 +225,7 @@ async def health(request: Request) -> dict[str, Any]:
 
 
 @app.post("/detect-tickets", dependencies=[Depends(require_api_key)])
-async def detect_tickets(
-    request: Request,
-    debugOcr: bool = Query(False),
-    includeDebug: bool = Query(False),
-) -> dict[str, Any]:
+async def detect_tickets(request: Request) -> dict[str, Any]:
     detector = detector_from_app(request)
     data = await image_bytes_from_request(request)
 
@@ -242,15 +234,10 @@ async def detect_tickets(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    runtime_config = detector.config
-    if debugOcr and runtime_config.ocr_min_confidence <= 0:
-        runtime_config = replace(runtime_config, ocr_min_confidence=10.0)
-
     try:
         tickets = detector.detect(
             image_bgr,
-            config=runtime_config,
-            enable_ocr=debugOcr,
+            enable_ocr=False,
             verbose=False,
         )
     except Exception as exc:
@@ -260,4 +247,4 @@ async def detect_tickets(
             detail=f"Ticket detection failed: {exc}",
         ) from exc
 
-    return tickets_api_response(image_bgr, tickets, include_debug=includeDebug)
+    return tickets_api_response(image_bgr, tickets)

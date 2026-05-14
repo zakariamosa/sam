@@ -2,7 +2,8 @@
 
 This project uses Meta Segment Anything (SAM ViT-B) locally to segment kitchen
 tickets and return polygon coordinates. It does not use Azure Vision, YOLO, or
-Detectron2.
+Detectron2. The production HTTP API does not use OCR and does not require
+Tesseract.
 
 The detector keeps the current SAM automatic-mask behavior and light
 paper-region filtering. It does not force rectangles, so tilted, partial,
@@ -16,6 +17,7 @@ ticket_detector.py  reusable SAM detection and filtering logic
 detect_tickets.py   local/manual CLI test script
 models/             SAM checkpoint location
 requirements.txt    Python dependencies
+requirements-ocr.txt optional OCR dependency for local CLI debugging only
 README.md           setup and usage
 ```
 
@@ -42,7 +44,7 @@ New-Item -ItemType Directory -Force .\models
 Invoke-WebRequest -Uri https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth -OutFile .\models\sam_vit_b_01ec64.pth
 ```
 
-## macOS Setup
+## macOS/Linux Server Setup
 
 Create a virtual environment:
 
@@ -58,6 +60,9 @@ Install PyTorch and dependencies:
 python -m pip install torch torchvision
 python -m pip install -r requirements.txt
 ```
+
+Do not install Tesseract for the server. The FastAPI service only loads SAM and
+returns ticket polygons as JSON.
 
 Download the SAM ViT-B checkpoint:
 
@@ -90,7 +95,7 @@ Prompt mode is still available for manual testing:
 ```
 
 The CLI saves annotated images and JSON. The HTTP API does not save images,
-crops, or output folders.
+crops, output folders, or OCR results.
 
 ## Running As A Server
 
@@ -112,8 +117,12 @@ python -m uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
 The SAM model is loaded once at startup and reused for requests.
+OCR is not initialized or invoked by the server.
 
 ## API
+
+`POST /detect-tickets` decodes the input image, runs SAM ticket detection, and
+returns JSON polygons. It does not run OCR.
 
 ### Health
 
@@ -200,21 +209,19 @@ SAM_MAX_DIM                    default: 1024
 SAM_POINTS_PER_SIDE            default: 16
 SAM_POINTS_PER_BATCH           default: 8
 SAM_SAME_WIDTH_TOLERANCE       default: 0.0
-SAM_OCR_MIN_CONFIDENCE         default: 0.0; used only when debugOcr=true
 ```
 
-Most filtering thresholds can also be overridden with `SAM_...` variables that
-match the names in `DetectorConfig` inside `ticket_detector.py`.
+Most production SAM filtering thresholds can also be overridden with `SAM_...`
+variables that match the names in `DetectorConfig` inside `ticket_detector.py`.
 
-## Debug Options
+## Optional Local OCR Debugging
 
-OCR is not used in normal API mode. To run the optional local OCR confidence
-check for debugging:
+OCR is not part of the production API. For local CLI experiments only, install
+the optional Python OCR dependency and a system Tesseract package separately:
 
 ```bash
-curl -X POST "http://localhost:8000/detect-tickets?debugOcr=true&includeDebug=true" \
-  -H "x-api-key: change-me" \
-  -F "image=@Test Images/IMG_2437.jpeg"
+python -m pip install -r requirements-ocr.txt
+python detect_tickets.py "Test Images/IMG_2437.jpeg" --mode auto --ocr-min-confidence 10
 ```
 
 The normal production path is:

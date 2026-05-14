@@ -1,1 +1,1 @@
-curl -X POST "http://127.0.0.1:8000/detect-tickets" -H "x-api-key: zakariamosa2026!" -F "image=@/Users/odeya/Desktop/sam/sam/Test Images/IMG_2437.jpeg"
+ls "/Users/odeya/Desktop/sam/sam/Test Images/IMG_2437.jpeg"

@@ -1,33 +1,10 @@
-You are right — that was my mistake.
+cd ~/Desktop/sam/sam
 
-Earlier I included Tesseract because your old script had OCR fields like:
-
-ocr_confidence
-ocr_word_count
-
-But after we changed the direction, your SAM service does not need OCR anymore.
-
-For your real project, the Mac/server should only do:
-
-image → SAM polygons → JSON
-
-So you can skip Tesseract completely.
-
-Install only:
-
-python3
-git
-
-Then inside the project:
-
-python3 -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip setuptools wheel
-pip install torch torchvision
-pip install -r requirements.txt
 
-But make sure requirements.txt does not force Tesseract/OCR dependencies like:
+export SAM_CHECKPOINT="checkpoints/sam_vit_h_4b8939.pth"
+export SAM_MODEL_TYPE="vit_h"
+export SAM_DEVICE="cpu"
+export SAM_API_KEY="change-me"
 
-pytesseract
-
-If it does, remove pytesseract from requirements.txt for the server version.
+uvicorn app:app --host 0.0.0.0 --port 8000

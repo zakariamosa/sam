@@ -1,2 +1,5 @@
-mkdir -p checkpoints
-curl -L https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth -o checkpoints/sam_vit_h_4b8939.pth
+export SAM_CHECKPOINT="checkpoints/sam_vit_h_4b8939.pth"
+export SAM_MODEL_TYPE="vit_h"
+export SAM_DEVICE="cpu"
+export SAM_API_KEY="zakaria123"
+uvicorn app:app --host 0.0.0.0 --port 8000

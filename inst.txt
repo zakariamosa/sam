@@ -1,10 +1,10 @@
-git pull
+Use Cloudflare Tunnel. Do not open router ports.
+
+1. Keep SAM server running
+
+On Mac:
+
 source .venv/bin/activate
-pip install -r requirements-mobilesam.txt
-
-mkdir -p models
-curl -L https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt -o models/mobile_sam.pt
-
 export MODEL_BACKEND=mobilesam
 export SAM_CHECKPOINT="models/mobile_sam.pt"
 export SAM_MODEL_TYPE="vit_t"
@@ -12,3 +12,40 @@ export SAM_DEVICE="cpu"
 export SAM_API_KEY="zakaria123"
 
 uvicorn app:app --host 0.0.0.0 --port 8000
+
+Keep this terminal open.
+
+2. Install Cloudflare Tunnel
+
+In another terminal:
+
+brew install cloudflared
+3. Start temporary public tunnel
+cloudflared tunnel --url http://localhost:8000
+
+It will give you a URL like:
+
+https://something.trycloudflare.com
+
+Then test:
+
+https://something.trycloudflare.com/health
+
+Your web app should call:
+
+https://something.trycloudflare.com/detect-tickets
+
+with header:
+
+x-api-key: zakaria123
+Important
+
+This temporary URL changes when you restart the tunnel.
+
+For a real stable public URL, you need:
+
+Cloudflare account
+your own domain
+named tunnel
+
+But for testing, the temporary tunnel is enough.

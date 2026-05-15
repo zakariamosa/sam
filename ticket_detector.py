@@ -7,6 +7,7 @@ import threading
 from dataclasses import asdict, dataclass, replace
 from importlib import import_module
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Iterable, Sequence
 
 import cv2
@@ -56,6 +57,15 @@ class DetectorConfig:
     ocr_min_words: int = 2
     ocr_psm: int = 6
     polygon_epsilon: float = 0.006
+    reject_high_detections: bool = True
+    min_bbox_center_y_ratio: float = 0.25
+
+
+@dataclass
+class DetectionTimings:
+    resize_preprocess_seconds: float = 0.0
+    model_inference_seconds: float = 0.0
+    mask_filtering_seconds: float = 0.0
 
 
 @dataclass
@@ -443,6 +453,7 @@ def passes_final_shape_constraints(
     _, y, box_w, box_h = ticket.bbox_xywh
     area_ratio = ticket.area / max(width * height, 1)
     aspect_ratio = box_h / max(box_w, 1)
+    center_y = y + box_h / 2.0
 
     if area_ratio < config.final_min_area_ratio:
         return False
@@ -451,6 +462,8 @@ def passes_final_shape_constraints(
     if box_h < height * config.min_height_ratio:
         return False
     if aspect_ratio < config.min_aspect or aspect_ratio > config.max_aspect:
+        return False
+    if config.reject_high_detections and center_y < height * config.min_bbox_center_y_ratio:
         return False
     if mode == "auto" and y > height * config.max_top_ratio:
         return False
@@ -739,15 +752,23 @@ class TicketDetector:
         config: DetectorConfig | None = None,
         enable_ocr: bool = False,
         verbose: bool = False,
+        timings: DetectionTimings | None = None,
     ) -> list[TicketMask]:
         runtime_config = config or self.config
+        preprocess_start = perf_counter()
         sam_bgr, scale = resize_for_sam(image_bgr, runtime_config.max_dim)
         sam_rgb = cv2.cvtColor(sam_bgr, cv2.COLOR_BGR2RGB)
+        if timings is not None:
+            timings.resize_preprocess_seconds = perf_counter() - preprocess_start
 
         with self._lock:
             with torch.inference_mode():
+                inference_start = perf_counter()
                 raw_masks = self.generator.generate(sam_rgb)
+                if timings is not None:
+                    timings.model_inference_seconds = perf_counter() - inference_start
 
+        filtering_start = perf_counter()
         candidates: list[TicketMask] = []
         for ann in raw_masks:
             candidate = candidate_from_mask(
@@ -768,13 +789,16 @@ class TicketDetector:
             print(f"Ticket-like masks after filtering: {len(candidates)}")
 
         deduped = dedupe_tickets(candidates, runtime_config)
-        return apply_logical_constraints(
+        tickets = apply_logical_constraints(
             image_bgr,
             deduped,
             runtime_config,
             mode="auto",
             enable_ocr=enable_ocr,
         )
+        if timings is not None:
+            timings.mask_filtering_seconds = perf_counter() - filtering_start
+        return tickets
 
     def detect_from_bytes(
         self,

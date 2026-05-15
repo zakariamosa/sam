@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from ticket_detector import (
+    DetectionTimings,
     DetectorConfig,
     TicketDetector,
     decode_image_bytes,
@@ -74,6 +75,11 @@ def config_from_env() -> DetectorConfig:
         min_dark_ratio=env_float("SAM_MIN_DARK_RATIO", defaults.min_dark_ratio),
         same_width_tolerance=env_float("SAM_SAME_WIDTH_TOLERANCE", defaults.same_width_tolerance),
         polygon_epsilon=env_float("SAM_POLYGON_EPSILON", defaults.polygon_epsilon),
+        reject_high_detections=env_bool("SAM_REJECT_HIGH_DETECTIONS", defaults.reject_high_detections),
+        min_bbox_center_y_ratio=env_float(
+            "SAM_MIN_BBOX_CENTER_Y_RATIO",
+            defaults.min_bbox_center_y_ratio,
+        ),
     )
 
 
@@ -267,18 +273,20 @@ async def detect_tickets(request: Request) -> dict[str, Any]:
     data = await image_bytes_from_request(request)
 
     try:
+        decode_start = perf_counter()
         image_bgr = decode_image_bytes(data)
+        decode_seconds = perf_counter() - decode_start
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     try:
-        inference_start = perf_counter()
+        timings = DetectionTimings()
         tickets = detector.detect(
             image_bgr,
             enable_ocr=False,
             verbose=False,
+            timings=timings,
         )
-        inference_seconds = perf_counter() - inference_start
     except Exception as exc:
         logger.exception("Ticket detection failed")
         raise HTTPException(
@@ -290,7 +298,9 @@ async def detect_tickets(request: Request) -> dict[str, Any]:
     logger.info(
         (
             "detect-tickets backend=%s model_type=%s device=%s image=%dx%d "
-            "tickets=%d inference_time=%.3fs total_request_time=%.3fs"
+            "tickets=%d image_decode_time=%.3fs resize_preprocess_time=%.3fs "
+            "model_inference_time=%.3fs mask_filtering_time=%.3fs "
+            "total_request_time=%.3fs high_filter_enabled=%s high_filter_min_center_y_ratio=%.3f"
         ),
         detector.model_backend,
         detector.model_type,
@@ -298,7 +308,12 @@ async def detect_tickets(request: Request) -> dict[str, Any]:
         image_bgr.shape[1],
         image_bgr.shape[0],
         len(tickets),
-        inference_seconds,
+        decode_seconds,
+        timings.resize_preprocess_seconds,
+        timings.model_inference_seconds,
+        timings.mask_filtering_seconds,
         total_seconds,
+        detector.config.reject_high_detections,
+        detector.config.min_bbox_center_y_ratio,
     )
     return tickets_api_response(image_bgr, tickets)

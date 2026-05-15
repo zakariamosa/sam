@@ -162,7 +162,8 @@ python -m uvicorn app:app --host 0.0.0.0 --port 8000
 
 The selected model is loaded once at startup and reused for requests. Startup
 logs include model load time. Each `/detect-tickets` success log includes
-inference time and total request time.
+image decode, resize/preprocess, model inference, mask filtering, and total
+request time.
 OCR is not initialized or invoked by the server.
 
 ## API
@@ -258,6 +259,8 @@ SAM_MAX_DIM                    default: 1024
 SAM_POINTS_PER_SIDE            default: 16
 SAM_POINTS_PER_BATCH           default: 8
 SAM_SAME_WIDTH_TOLERANCE       default: 0.0
+SAM_REJECT_HIGH_DETECTIONS     default: true
+SAM_MIN_BBOX_CENTER_Y_RATIO    default: 0.25
 ```
 
 Most production SAM filtering thresholds can also be overridden with `SAM_...`

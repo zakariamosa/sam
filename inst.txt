@@ -1,14 +1,14 @@
-ViT-B command:
+git pull
+source .venv/bin/activate
+pip install -r requirements-mobilesam.txt
 
 mkdir -p models
-curl -L https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth -o models/sam_vit_b_01ec64.pth
+curl -L https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt -o models/mobile_sam.pt
 
-Restart server with:
-
-export SAM_CHECKPOINT="models/sam_vit_b_01ec64.pth"
-export SAM_MODEL_TYPE="vit_b"
+export MODEL_BACKEND=mobilesam
+export SAM_CHECKPOINT="models/mobile_sam.pt"
+export SAM_MODEL_TYPE="vit_t"
 export SAM_DEVICE="cpu"
 export SAM_API_KEY="zakaria123"
-uvicorn app:app --host 0.0.0.0 --port 8000
 
-This should be much faster than ViT-H.
+uvicorn app:app --host 0.0.0.0 --port 8000

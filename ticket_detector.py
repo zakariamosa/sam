@@ -5,6 +5,7 @@ import math
 import sys
 import threading
 from dataclasses import asdict, dataclass, replace
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -12,10 +13,19 @@ import cv2
 import numpy as np
 import torch
 
-from segment_anything import SamAutomaticMaskGenerator, SamPredictor, sam_model_registry
-
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+MODEL_BACKEND_SAM = "sam"
+MODEL_BACKEND_MOBILESAM = "mobilesam"
+MODEL_BACKENDS = {MODEL_BACKEND_SAM, MODEL_BACKEND_MOBILESAM}
+DEFAULT_CHECKPOINTS = {
+    MODEL_BACKEND_SAM: Path("models/sam_vit_b_01ec64.pth"),
+    MODEL_BACKEND_MOBILESAM: Path("models/mobile_sam.pt"),
+}
+DEFAULT_MODEL_TYPES = {
+    MODEL_BACKEND_SAM: "vit_b",
+    MODEL_BACKEND_MOBILESAM: "vit_t",
+}
 
 
 @dataclass(frozen=True)
@@ -129,6 +139,60 @@ def sam_device(requested: str) -> str:
     return requested
 
 
+def normalize_model_backend(model_backend: str) -> str:
+    normalized = model_backend.strip().lower().replace("_", "").replace("-", "")
+    if normalized == "mobile":
+        normalized = MODEL_BACKEND_MOBILESAM
+    if normalized not in MODEL_BACKENDS:
+        valid = ", ".join(sorted(MODEL_BACKENDS))
+        raise ValueError(f"Unsupported MODEL_BACKEND '{model_backend}'. Expected one of: {valid}.")
+    return normalized
+
+
+def default_checkpoint_for_backend(model_backend: str) -> Path:
+    return DEFAULT_CHECKPOINTS[normalize_model_backend(model_backend)]
+
+
+def default_model_type_for_backend(model_backend: str) -> str:
+    return DEFAULT_MODEL_TYPES[normalize_model_backend(model_backend)]
+
+
+def import_sam_backend():
+    try:
+        module = import_module("segment_anything")
+    except ImportError as exc:
+        raise ImportError(
+            "SAM backend requires segment-anything. Install it with "
+            "'pip install git+https://github.com/facebookresearch/segment-anything.git'."
+        ) from exc
+    return module
+
+
+def import_mobilesam_backend():
+    try:
+        module = import_module("mobile_sam")
+    except ImportError as exc:
+        raise ImportError(
+            "MobileSAM backend requires MobileSAM. Install it with "
+            "'pip install git+https://github.com/ChaoningZhang/MobileSAM.git'."
+        ) from exc
+    return module
+
+
+def build_registered_model(module, checkpoint: Path, model_type: str, device: str, backend_label: str):
+    registry = module.sam_model_registry
+    try:
+        model_builder = registry[model_type]
+    except KeyError as exc:
+        valid = ", ".join(sorted(registry.keys()))
+        raise ValueError(f"Unknown {backend_label} model type '{model_type}'. Available: {valid}.") from exc
+
+    model = model_builder(checkpoint=str(checkpoint))
+    model.to(device=device)
+    model.eval()
+    return model
+
+
 def load_sam(checkpoint: Path, model_type: str, device: str):
     if not checkpoint.exists():
         raise FileNotFoundError(
@@ -136,10 +200,37 @@ def load_sam(checkpoint: Path, model_type: str, device: str):
             "Download Meta's ViT-B checkpoint, sam_vit_b_01ec64.pth, into the models folder."
         )
 
-    sam = sam_model_registry[model_type](checkpoint=str(checkpoint))
-    sam.to(device=device)
-    sam.eval()
-    return sam
+    module = import_sam_backend()
+    return build_registered_model(module, checkpoint, model_type, device, "SAM")
+
+
+def load_mobilesam(checkpoint: Path, model_type: str, device: str):
+    if not checkpoint.exists():
+        raise FileNotFoundError(
+            f"MobileSAM checkpoint not found: {checkpoint}\n"
+            "Download MobileSAM's mobile_sam.pt checkpoint into the models folder."
+        )
+
+    module = import_mobilesam_backend()
+    return build_registered_model(module, checkpoint, model_type, device, "MobileSAM")
+
+
+def backend_module(model_backend: str):
+    backend = normalize_model_backend(model_backend)
+    if backend == MODEL_BACKEND_SAM:
+        return import_sam_backend()
+    if backend == MODEL_BACKEND_MOBILESAM:
+        return import_mobilesam_backend()
+    raise AssertionError(f"Unhandled model backend: {backend}")
+
+
+def load_model(model_backend: str, checkpoint: Path, model_type: str, device: str):
+    backend = normalize_model_backend(model_backend)
+    if backend == MODEL_BACKEND_SAM:
+        return load_sam(checkpoint, model_type, device)
+    if backend == MODEL_BACKEND_MOBILESAM:
+        return load_mobilesam(checkpoint, model_type, device)
+    raise AssertionError(f"Unhandled model backend: {backend}")
 
 
 def largest_contour(mask: np.ndarray) -> np.ndarray | None:
@@ -549,7 +640,9 @@ def save_outputs(
     model_type: str,
     checkpoint: Path,
     device: str,
+    model_backend: str = MODEL_BACKEND_SAM,
 ) -> tuple[Path, Path]:
+    model_backend = normalize_model_backend(model_backend)
     output_dir.mkdir(parents=True, exist_ok=True)
     annotated_path = output_dir / f"{image_path.stem}_sam_tickets{image_path.suffix}"
     json_path = output_dir / f"{image_path.stem}_sam_tickets.json"
@@ -577,7 +670,12 @@ def save_outputs(
         "width": int(image_bgr.shape[1]),
         "height": int(image_bgr.shape[0]),
         "model": {
-            "name": "segment-anything",
+            "name": (
+                "mobile-sam"
+                if model_backend == MODEL_BACKEND_MOBILESAM
+                else "segment-anything"
+            ),
+            "backend": model_backend,
             "model_type": model_type,
             "checkpoint": str(checkpoint),
             "device": device,
@@ -611,13 +709,17 @@ class TicketDetector:
         model_type: str = "vit_b",
         device: str = "auto",
         config: DetectorConfig | None = None,
+        model_backend: str = MODEL_BACKEND_SAM,
     ) -> None:
         self.config = config or DetectorConfig()
+        self.model_backend = normalize_model_backend(model_backend)
         self.model_type = model_type
         self.checkpoint = checkpoint
         self.device = sam_device(device)
-        self.sam = load_sam(checkpoint, model_type, self.device)
-        self.generator = SamAutomaticMaskGenerator(
+        self.sam = load_model(self.model_backend, checkpoint, model_type, self.device)
+        module = backend_module(self.model_backend)
+        self._predictor_cls = module.SamPredictor
+        self.generator = module.SamAutomaticMaskGenerator(
             self.sam,
             points_per_side=self.config.points_per_side,
             points_per_batch=self.config.points_per_batch,
@@ -652,7 +754,7 @@ class TicketDetector:
                 ann["segmentation"].astype(bool),
                 sam_bgr,
                 scale,
-                source="sam-auto",
+                source=f"{self.model_backend}-auto",
                 predicted_iou=float(ann.get("predicted_iou", 0.0)),
                 stability_score=float(ann.get("stability_score", 0.0)),
                 config=runtime_config,
@@ -698,7 +800,7 @@ class TicketDetector:
         scaled_points = [(int(round(x * scale)), int(round(y * scale))) for x, y in points]
 
         with self._lock:
-            predictor = SamPredictor(self.sam)
+            predictor = self._predictor_cls(self.sam)
             predictor.set_image(sam_rgb)
 
             candidates: list[TicketMask] = []
@@ -718,7 +820,7 @@ class TicketDetector:
                         mask.astype(bool),
                         sam_bgr,
                         scale,
-                        source="sam-prompt",
+                        source=f"{self.model_backend}-prompt",
                         predicted_iou=float(score),
                         stability_score=1.0,
                         config=runtime_config,

@@ -10,8 +10,11 @@ import cv2
 from ticket_detector import (
     DetectorConfig,
     TicketDetector,
+    default_checkpoint_for_backend,
+    default_model_type_for_backend,
     iter_images,
     load_bgr,
+    normalize_model_backend,
     parse_points,
     resize_for_sam,
     save_outputs,
@@ -146,6 +149,7 @@ def process_image(
         tickets,
         args.output_dir,
         save_crops=args.save_crops,
+        model_backend=args.backend,
         model_type=args.model_type,
         checkpoint=args.checkpoint,
         device=detector.device,
@@ -157,11 +161,12 @@ def process_image(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Segment kitchen tickets with Meta Segment Anything.")
+    parser = argparse.ArgumentParser(description="Segment kitchen tickets with SAM or MobileSAM.")
     parser.add_argument("input", type=Path, help="One image file or a directory of images.")
     parser.add_argument("--output-dir", type=Path, default=Path("sam_outputs"))
-    parser.add_argument("--checkpoint", type=Path, default=Path("models/sam_vit_b_01ec64.pth"))
-    parser.add_argument("--model-type", default="vit_b", choices=("vit_b", "vit_l", "vit_h"))
+    parser.add_argument("--backend", default="sam", choices=("sam", "mobilesam"))
+    parser.add_argument("--checkpoint", type=Path, default=None)
+    parser.add_argument("--model-type", default=None)
     parser.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda", "mps"))
     parser.add_argument("--mode", default="auto", choices=("auto", "prompt"))
     parser.add_argument("--points", default="", help='Prompt points as original-image coordinates: "x,y;x,y".')
@@ -199,14 +204,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    args.backend = normalize_model_backend(args.backend)
+    if args.checkpoint is None:
+        args.checkpoint = default_checkpoint_for_backend(args.backend)
+    if args.model_type is None:
+        args.model_type = default_model_type_for_backend(args.backend)
+
     images = list(iter_images(args.input))
     if not images:
         print(f"No images found: {args.input}", file=sys.stderr)
         return 1
 
     config = config_from_args(args)
-    print(f"Loading SAM {args.model_type} on {args.device}...")
-    detector = TicketDetector(args.checkpoint, args.model_type, args.device, config)
+    print(f"Loading {args.backend} {args.model_type} on {args.device}...")
+    detector = TicketDetector(args.checkpoint, args.model_type, args.device, config, args.backend)
     print(f"Using device: {detector.device}")
 
     total = 0

@@ -5,6 +5,7 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from urllib.parse import urlparse
 
@@ -12,7 +13,15 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from ticket_detector import DetectorConfig, TicketDetector, decode_image_bytes, tickets_api_response
+from ticket_detector import (
+    DetectorConfig,
+    TicketDetector,
+    decode_image_bytes,
+    default_checkpoint_for_backend,
+    default_model_type_for_backend,
+    normalize_model_backend,
+    tickets_api_response,
+)
 
 
 logger = logging.getLogger("sam-ticket-service")
@@ -71,18 +80,36 @@ def config_from_env() -> DetectorConfig:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = config_from_env()
-    checkpoint = Path(os.getenv("SAM_CHECKPOINT", "models/sam_vit_b_01ec64.pth"))
-    model_type = os.getenv("SAM_MODEL_TYPE", "vit_b")
+    model_backend = normalize_model_backend(os.getenv("MODEL_BACKEND", "sam"))
+    checkpoint_env = (
+        "MOBILESAM_CHECKPOINT" if model_backend == "mobilesam" else "SAM_CHECKPOINT"
+    )
+    model_type_env = (
+        "MOBILESAM_MODEL_TYPE" if model_backend == "mobilesam" else "SAM_MODEL_TYPE"
+    )
+    checkpoint = Path(
+        os.getenv(checkpoint_env, str(default_checkpoint_for_backend(model_backend)))
+    )
+    model_type = os.getenv(model_type_env, default_model_type_for_backend(model_backend))
     device = os.getenv("SAM_DEVICE", "auto")
 
-    logger.info("Loading SAM %s from %s on %s", model_type, checkpoint, device)
+    load_start = perf_counter()
+    logger.info("Loading %s %s from %s on %s", model_backend, model_type, checkpoint, device)
     app.state.detector = TicketDetector(
         checkpoint=checkpoint,
         model_type=model_type,
         device=device,
         config=config,
+        model_backend=model_backend,
     )
-    logger.info("SAM loaded on %s", app.state.detector.device)
+    load_seconds = perf_counter() - load_start
+    logger.info(
+        "Model loaded backend=%s model_type=%s device=%s load_time=%.3fs",
+        app.state.detector.model_backend,
+        app.state.detector.model_type,
+        app.state.detector.device,
+        load_seconds,
+    )
     yield
 
 
@@ -227,6 +254,7 @@ async def health(request: Request) -> dict[str, Any]:
     return {
         "status": "ok" if detector is not None else "starting",
         "modelLoaded": detector is not None,
+        "modelBackend": None if detector is None else detector.model_backend,
         "modelType": None if detector is None else detector.model_type,
         "device": None if detector is None else detector.device,
     }
@@ -234,6 +262,7 @@ async def health(request: Request) -> dict[str, Any]:
 
 @app.post("/detect-tickets", dependencies=[Depends(require_api_key)])
 async def detect_tickets(request: Request) -> dict[str, Any]:
+    total_start = perf_counter()
     detector = detector_from_app(request)
     data = await image_bytes_from_request(request)
 
@@ -243,11 +272,13 @@ async def detect_tickets(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     try:
+        inference_start = perf_counter()
         tickets = detector.detect(
             image_bgr,
             enable_ocr=False,
             verbose=False,
         )
+        inference_seconds = perf_counter() - inference_start
     except Exception as exc:
         logger.exception("Ticket detection failed")
         raise HTTPException(
@@ -255,4 +286,19 @@ async def detect_tickets(request: Request) -> dict[str, Any]:
             detail=f"Ticket detection failed: {exc}",
         ) from exc
 
+    total_seconds = perf_counter() - total_start
+    logger.info(
+        (
+            "detect-tickets backend=%s model_type=%s device=%s image=%dx%d "
+            "tickets=%d inference_time=%.3fs total_request_time=%.3fs"
+        ),
+        detector.model_backend,
+        detector.model_type,
+        detector.device,
+        image_bgr.shape[1],
+        image_bgr.shape[0],
+        len(tickets),
+        inference_seconds,
+        total_seconds,
+    )
     return tickets_api_response(image_bgr, tickets)
